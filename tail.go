@@ -70,6 +70,8 @@ type Tail struct {
 	changes *watch.FileChanges
 
 	tomb.Tomb // provides: Done, Kill, Dying
+
+	lastDelChReceived time.Time // Last delete channel received time
 }
 
 var (
@@ -307,6 +309,13 @@ func (tail *Tail) waitForChanges() error {
 	case <-tail.changes.Modified:
 		return nil
 	case <-tail.changes.Deleted:
+		now := time.Now()
+		defer func() {
+			tail.lastDelChReceived = now
+		}()
+		if !tail.lastDelChReceived.Before(now.Add(-1 * time.Second)) {
+			return nil
+		}
 		tail.changes = nil
 		if tail.ReOpen {
 			// XXX: we must not log from a library.
@@ -322,13 +331,6 @@ func (tail *Tail) waitForChanges() error {
 			return ErrStop
 		}
 	case <-tail.changes.Truncated:
-		// Always reopen truncated files (Follow is true)
-		tail.Logger.Printf("Re-opening truncated file %s ...", tail.Filename)
-		if err := tail.reopen(); err != nil {
-			return err
-		}
-		tail.Logger.Printf("Successfully reopened truncated %s", tail.Filename)
-		tail.openReader()
 		return nil
 	case <-tail.Dying():
 		return ErrStop
